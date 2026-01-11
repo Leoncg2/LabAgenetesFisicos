@@ -371,14 +371,49 @@ if caso_seleccionado != "Seleccionar...":
         else:
             st.markdown(f'<div class="error-box"><h3>⚠️ Atención</h3>{str_feedback}</div>', unsafe_allow_html=True)
             
-        # Consultar IA
-        if "GEMINI_API_KEY" in st.secrets:
-            with st.spinner("🧠 Consultando al Profesor Virtual..."):
-                res_ia = consultar_ia_oficial(datos_caso, f"Equipo: {nombre_completo_equipo}. Config: {params}. Justificación: {justificacion}", str_feedback)
-                st.markdown("### 🎓 Feedback Docente")
-                st.write(res_ia)
+       # =============================================================================
+# REEMPLAZA TU FUNCIÓN DE IA POR ESTA (MÉTODO HTTP ESTABLE)
+# =============================================================================
+def consultar_ia_oficial(caso, respuesta_alumno, analisis_tecnico):
+    api_key = st.secrets.get("GEMINI_API_KEY")
+    if not api_key:
+        return "⚠️ Error: Falta la API Key en los Secrets."
+
+    # Usamos la URL v1beta estándar. Si 'gemini-1.5-flash' falla, el fallback es 'gemini-pro'
+    model_name = "gemini-1.5-flash" 
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+    
+    headers = {'Content-Type': 'application/json'}
+    
+    prompt = f"""
+    Eres un profesor de Kinesiología.
+    Caso: {caso['desc']}
+    Alumno eligió: {respuesta_alumno}
+    Validación técnica del sistema: {analisis_tecnico}
+    
+    Tarea:
+    Da feedback en base a la validación técnica. Si falló, explica la fisiología. Si acertó, felicita.
+    Máximo 50 palabras.
+    """
+    
+    data = {
+        "contents": [{"parts": [{"text": prompt}]}]
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=10)
+        
+        if response.status_code == 200:
+            return response.json()['candidates'][0]['content']['parts'][0]['text']
         else:
-            st.warning("⚠️ No se ha configurado la API Key de Gemini, por lo que no puedo darte el feedback cualitativo.")
+            # Si falla el modelo Flash, intentamos con Gemini Pro (Plan B automático)
+            if response.status_code == 404:
+                url_backup = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
+                response_backup = requests.post(url_backup, headers=headers, json=data, timeout=10)
+                if response_backup.status_code == 200:
+                     return response_backup.json()['candidates'][0]['content']['parts'][0]['text']
             
-else:
-    st.write("👈 Selecciona un caso en el menú lateral para empezar.")
+            return f"⚠️ Error de Google ({response.status_code}): {response.text}"
+            
+    except Exception as e:
+        return f"⚠️ Error de conexión: {str(e)}"
