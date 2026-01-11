@@ -1,23 +1,66 @@
 import streamlit as st
-import requests
-import json
+import google.generativeai as genai
+import os
 
 # =============================================================================
 # 1. CONFIGURACIÓN DE PÁGINA Y ESTILO
 # =============================================================================
-st.set_page_config(page_title="Simulador Kine", page_icon="🏥", layout="wide")
+st.set_page_config(page_title="Simulador Kine Pro", page_icon="🏥", layout="wide")
 
-# CSS para ocultar elementos innecesarios y dar estilo
+# Estilos CSS para compactar los inputs numéricos y dar look médico
 st.markdown("""
 <style>
-    .stButton>button { width: 100%; border-radius: 10px; height: 3em; }
-    .success-box { padding: 1rem; background-color: #dcfce7; border: 1px solid #22c55e; border-radius: 10px; color: #14532d; }
-    .error-box { padding: 1rem; background-color: #fee2e2; border: 1px solid #ef4444; border-radius: 10px; color: #7f1d1d; }
+    .stNumberInput input { padding: 5px; }
+    div[data-testid="stExpander"] details summary p { font-weight: bold; font-size: 1.1em; color: #2563eb; }
+    .success-box { padding: 1rem; background-color: #dcfce7; border-left: 5px solid #22c55e; border-radius: 5px; color: #14532d; }
+    .error-box { padding: 1rem; background-color: #fee2e2; border-left: 5px solid #ef4444; border-radius: 5px; color: #7f1d1d; }
 </style>
 """, unsafe_allow_html=True)
 
 # =============================================================================
-# 2. BASE DE DATOS (Tu misma lógica)
+# 2. CONFIGURACIÓN DE IA (USANDO LIBRERÍA OFICIAL)
+# =============================================================================
+def consultar_ia_oficial(caso, respuesta_alumno, analisis_tecnico):
+    # Intentamos obtener la API Key de los Secrets de Streamlit
+    api_key = st.secrets.get("GEMINI_API_KEY")
+    
+    if not api_key:
+        return "⚠️ Error Crítico: No se encontró la GEMINI_API_KEY en los Secrets."
+
+    try:
+        # Configuración segura usando la librería oficial
+        genai.configure(api_key=api_key)
+        
+        # Usamos el modelo flash que es rápido y estable
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        prompt = f"""
+        Actúa como un profesor experto de Kinesiología (Fisioterapia) de la Universidad de Chile.
+        
+        CONTEXTO CLÍNICO:
+        {caso['desc']}
+        
+        CONFIGURACIÓN ELEGIDA POR EL ESTUDIANTE:
+        {respuesta_alumno}
+        
+        VALIDACIÓN TÉCNICA DEL SISTEMA:
+        {analisis_tecnico}
+        
+        TU TAREA:
+        1. Basa tu juicio PRINCIPALMENTE en la 'Validación Técnica'.
+        2. Si la validación dice que hay errores, explica brevemente la fisiología detrás del error (ej: por qué esa frecuencia no sirve).
+        3. Si la validación es correcta, felicita y aporta un "Dato Clínico" curioso o un tip práctico breve.
+        4. Sé conciso (máximo 50 palabras). Tono chileno académico pero cercano.
+        """
+        
+        response = model.generate_content(prompt)
+        return response.text
+        
+    except Exception as e:
+        return f"⚠️ Error de conexión con Google: {str(e)}"
+
+# =============================================================================
+# 3. BASE DE DATOS DE CASOS (COMPLETA)
 # =============================================================================
 DB_CASOS = {
     "1. Ruptura LCA (Post-Op)": {
@@ -107,47 +150,11 @@ DB_CASOS = {
 }
 
 # =============================================================================
-# 3. LÓGICA DE IA (Gemini API)
-# =============================================================================
-def consultar_ia(caso, respuesta_alumno, analisis_tecnico):
-    # En Streamlit las claves se sacan de st.secrets
-    if "GEMINI_API_KEY" not in st.secrets:
-        return "⚠️ Error: Falta configurar el Secret 'GEMINI_API_KEY'."
-    
-    api_key = st.secrets["GEMINI_API_KEY"]
-    
-    prompt = f"""
-    Actúa como docente de Kinesiología.
-    CASO: {caso['desc']}
-    DECISIÓN ALUMNO: {respuesta_alumno}
-    ANÁLISIS TÉCNICO: {analisis_tecnico}
-    
-    INSTRUCCIONES:
-    Evalúa basándote en el Análisis Técnico.
-    Si falló, explica brevemente la fisiología.
-    Si acertó, felicita y da un dato curioso.
-    Máximo 40 palabras. Tono chileno neutro.
-    """
-    
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={api_key}"
-    headers = {'Content-Type': 'application/json'}
-    data = {"contents": [{"parts": [{"text": prompt}]}]}
-    
-    try:
-        response = requests.post(url, headers=headers, json=data, timeout=10)
-        if response.status_code == 200:
-            return response.json()['candidates'][0]['content']['parts'][0]['text']
-        else:
-            return f"Error Google: {response.status_code}"
-    except Exception as e:
-        return f"Error conexión: {e}"
-
-# =============================================================================
-# 4. INTERFAZ Y LÓGICA PRINCIPAL
+# 4. INTERFAZ Y LÓGICA PRINCIPAL (CON TODOS LOS PARÁMETROS RESTAURADOS)
 # =============================================================================
 
 # -- Sidebar: Selección de Caso --
-st.sidebar.title("🏥 Simulador Kine")
+st.sidebar.title("🏥 Simulador Kine Pro")
 caso_seleccionado = st.sidebar.selectbox("Selecciona un Caso Clínico:", ["Seleccionar..."] + list(DB_CASOS.keys()))
 
 if caso_seleccionado != "Seleccionar...":
@@ -168,50 +175,130 @@ if caso_seleccionado != "Seleccionar...":
     else:
         equipo = st.sidebar.selectbox("Equipo:", ["Ultrasonido", "Onda Corta", "Infrarrojo"])
 
-    st.markdown(f"## Configurando: **{equipo}** {f'({subtipo})' if subtipo else ''}")
+    nombre_completo_equipo = f"{equipo} ({subtipo})" if subtipo else equipo
+    st.markdown(f"## Configurando: **{nombre_completo_equipo}**")
     st.markdown("---")
 
-    # -- FORMULARIOS DINÁMICOS --
+    # -- FORMULARIOS DINÁMICOS COMPLEJOS --
     params = {} # Diccionario para guardar lo que elija el usuario
 
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if equipo == "TENS":
-            params["freq"] = st.number_input("Frecuencia (Hz)", 0, 200)
-            params["duracion"] = st.number_input("Duración de Fase (µs)", 0, 500)
+    # Contenedor principal para los parámetros
+    with st.container():
         
+        # === TENS (Parámetros Completos) ===
+        if equipo == "TENS":
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                params["onda"] = st.selectbox("Tipo de Onda", ["Bifásica Simétrica", "Bifásica Asimétrica"])
+                params["freq"] = st.number_input("Frecuencia (Hz)", 0, 250, value=0)
+            with c2:
+                params["duracion"] = st.number_input("Duración de Fase (µs)", 0, 500, value=0)
+                params["tiempo"] = st.number_input("Tiempo Total (min)", 0, 60, value=0)
+            with c3:
+                params["intensidad"] = st.number_input("Intensidad (mA)", 0, 100, value=0)
+                params["modo"] = st.radio("Modo", ["CC (Corriente Constante)", "CV (Voltaje Constante)"])
+
+            with st.expander("🎛️ Modulaciones y Burst (Avanzado)", expanded=True):
+                mc1, mc2, mc3 = st.columns(3)
+                with mc1: params["mod_freq"] = st.number_input("Mod. Frecuencia (Hz)", 0, 100, value=0)
+                with mc2: params["mod_amp"] = st.number_input("Mod. Amplitud (%)", 0, 100, value=0)
+                with mc3: params["burst"] = st.number_input("Burst / Recorrido", 0, 10, value=0)
+
+        # === RUSA (Parámetros Completos) ===
         elif equipo == "Rusa":
-            params["portadora"] = st.number_input("Portadora (Hz)", value=2500)
-            params["burst"] = st.number_input("Burst (Hz)", 0, 100)
-            params["ratio"] = st.selectbox("Ratio", ["1:1", "1:2", "1:4", "1:5"])
+            c1, c2 = st.columns(2)
+            with c1:
+                params["onda"] = st.selectbox("Onda", ["Rusa (Sinusoidal)", "Cuadrada"])
+                params["portadora"] = st.number_input("Portadora (Hz)", value=2500, step=500)
+                params["burst"] = st.number_input("Frec. Burst (Hz)", 0, 100, value=0)
+            with c2:
+                params["ratio"] = st.selectbox("Ratio (Ciclo Trabajo)", ["1:1", "1:2", "1:4", "1:5"])
+                params["intensidad"] = st.number_input("Intensidad (mA)", 0, 120, value=0)
+                params["tiempo"] = st.number_input("Tiempo (min)", 0, 60, value=0)
             
+            with st.expander("⏱️ Tiempos de Ciclo (ON/OFF/Rampa)", expanded=True):
+                t1, t2, t3 = st.columns(3)
+                with t1: params["rampa"] = st.number_input("Rampa (s)", 0, 10, value=0)
+                with t2: params["on"] = st.number_input("Tiempo ON (s)", 0, 60, value=0)
+                with t3: params["off"] = st.number_input("Tiempo OFF (s)", 0, 60, value=0)
+
+        # === TIF (Parámetros Completos) ===
         elif equipo == "TIF":
-            params["portadora"] = st.number_input("Portadora (Hz)", 0, 10000)
-            params["amf"] = st.number_input("AMF (Hz)", 0, 200)
-            params["vector"] = st.selectbox("Vector", ["Manual/Off", "6:6", "Auto"])
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                params["portadora"] = st.number_input("Portadora (Hz)", 0, 10000, value=0)
+                params["amf"] = st.number_input("AMF (Hz)", 0, 250, value=0)
+            with c2:
+                params["espectro"] = st.number_input("Espectro de Frec.", 0, 200, value=0)
+                params["vector"] = st.selectbox("Vector", ["Manual/Off", "6:6", "1:30:1:30"])
+            with c3:
+                params["intensidad"] = st.number_input("Intensidad (mA)", 0, 100, value=0)
+                params["tiempo"] = st.number_input("Tiempo (min)", 0, 60, value=0)
 
+        # === FARÁDICA (Parámetros Completos) ===
         elif equipo == "Farádica":
-            params["polaridad"] = st.selectbox("Polaridad", ["Normal", "Inversión"])
-            params["fase"] = st.number_input("Tiempo Fase (ms)", 0, 2000)
+            c1, c2 = st.columns(2)
+            with c1:
+                params["polaridad"] = st.selectbox("Polaridad", ["Normal", "Inversión"])
+                params["intensidad"] = st.number_input("Intensidad (mA)", 0, 80, value=0)
+            with c2:
+                params["tiempo"] = st.number_input("Tiempo Sesión (min)", 0, 60, value=0)
+                params["modo"] = st.radio("Modo", ["CC", "CV"])
             
+            with st.expander("⚡ Configuración de Pulsos (ms)", expanded=True):
+                p1, p2 = st.columns(2)
+                with p1: params["fase"] = st.number_input("Tiempo Fase (ms)", 0.0, 5000.0, value=0.0, step=10.0)
+                with p2: params["pausa"] = st.number_input("Tiempo Pausa (ms)", 0.0, 5000.0, value=0.0, step=10.0)
+
+        # === ULTRASONIDO (Parámetros Completos) ===
         elif equipo == "Ultrasonido":
-            params["frecuencia"] = st.radio("Frecuencia", ["1 MHz", "3 MHz"])
-            params["ciclo"] = st.selectbox("Duty Cycle", ["100% (Continuo)", "50% (1:1)", "20% (1:4)", "10%"])
-            params["intensidad"] = st.number_input("Intensidad (W/cm²)", 0.0, 3.0, step=0.1)
+            c1, c2 = st.columns(2)
+            with c1:
+                params["frecuencia"] = st.radio("Frecuencia", ["1 MHz", "3 MHz"])
+                params["ciclo"] = st.selectbox("Duty Cycle", ["100% (Continuo)", "50% (1:1)", "20% (1:4)", "10%"])
+            with c2:
+                params["intensidad"] = st.number_input("Intensidad (W/cm²)", 0.0, 3.0, step=0.1)
+                params["tiempo"] = st.number_input("Tiempo (min)", 0, 30, value=0)
+                params["era"] = st.selectbox("Relación ERA", ["1x ERA", "2x ERA", "3x ERA"])
 
+        # === ONDA CORTA (Parámetros Completos con Cálculo Auto) ===
         elif equipo == "Onda Corta":
-            params["metodo"] = st.selectbox("Método", ["Capacitivo (Campo Eléctrico)", "Inductivo (Campo Magnético)"])
-            params["potencia"] = st.number_input("Potencia Media (W)", 0, 200)
+            c1, c2 = st.columns(2)
+            with c1:
+                params["metodo"] = st.selectbox("Método", ["Capacitivo (Campo Eléctrico)", "Inductivo (Campo Magnético)"])
+                params["tecnica"] = st.selectbox("Técnica", ["Coplanar", "Contraplanar", "Longitudinal", "Monodo"])
+                params["modo"] = st.radio("Modo Emisión", ["Pulsado (PSWD)", "Continuo (CSWD)"])
+            with c2:
+                params["fase"] = st.number_input("Ancho Pulso (µs)", 0, 400, value=0) # Fase
+                params["frec_pulso"] = st.number_input("Frecuencia (Hz)", 0, 1000, value=0)
+                params["potencia"] = st.number_input("Potencia Pico (W)", 0, 1000, value=0)
+                params["tiempo"] = st.number_input("Tiempo (min)", 0, 30, value=0)
 
+            # Cálculo en vivo de la Potencia Media
+            potencia_media = 0
+            if params["modo"] == "Continuo (CSWD)":
+                potencia_media = params["potencia"]
+            else:
+                # Fórmula: Pico * (Ancho * 10^-6) * Frecuencia
+                potencia_media = round(params["potencia"] * (params["fase"] * 0.000001) * params["frec_pulso"], 1)
+            
+            st.metric(label="🔥 Potencia Media Resultante (Automático)", value=f"{potencia_media} W")
+            params["media_resultante"] = potencia_media
+
+        # === INFRARROJO ===
         elif equipo == "Infrarrojo":
-            params["distancia"] = st.number_input("Distancia (cm)", 0, 100)
+            c1, c2 = st.columns(2)
+            with c1:
+                params["tipo"] = st.radio("Tipo Lámpara", ["Luminoso", "No Luminoso"])
+            with c2:
+                params["distancia"] = st.number_input("Distancia (cm)", 0, 100, value=0)
+                params["tiempo"] = st.number_input("Tiempo (min)", 0, 60, value=0)
 
-    with col2:
-        justificacion = st.text_area("Justificación Clínica", placeholder="¿Por qué elegiste estos parámetros?")
-        validar_btn = st.button("✅ Validar Tratamiento", type="primary")
+    st.markdown("---")
+    justificacion = st.text_area("✍️ Justificación Clínica", placeholder="Explica aquí por qué elegiste estos parámetros...")
+    validar_btn = st.button("✅ Validar Tratamiento", type="primary", use_container_width=True)
 
-    # -- LÓGICA DE VALIDACIÓN (Al presionar botón) --
+    # -- LÓGICA DE VALIDACIÓN --
     if validar_btn:
         feedback_tecnico = []
         es_correcto = True
@@ -219,59 +306,79 @@ if caso_seleccionado != "Seleccionar...":
         equipos_validos = solucion.get("equipos", [])
         
         # 1. Validar Nombre del Equipo
-        nombre_completo = equipo if not subtipo else f"{equipo} ({subtipo})"
         match_equipo = False
         for eq in equipos_validos:
-            if eq in nombre_completo or (equipo == "Onda Corta" and eq == "Onda Corta"):
+            if eq in nombre_completo_equipo or (equipo == "Onda Corta" and eq == "Onda Corta"):
                 match_equipo = True
                 break
         
         if not match_equipo:
             es_correcto = False
-            feedback_tecnico.append(f"❌ Equipo incorrecto. Elegiste {nombre_completo}, se sugiere: {', '.join(equipos_validos)}")
+            feedback_tecnico.append(f"❌ **Equipo:** Elegiste {nombre_completo_equipo}, pero se sugiere: {', '.join(equipos_validos)}.")
         else:
-            feedback_tecnico.append(f"✅ Equipo {nombre_completo} correcto.")
+            feedback_tecnico.append(f"✅ **Equipo:** {nombre_completo_equipo} es una opción correcta.")
             
-            # 2. Validar Parámetros Específicos (Lógica Simplificada para Streamlit)
+            # 2. VALIDACIONES ESPECÍFICAS (Lógica original completa)
+            
+            # --- ULTRASONIDO ---
             if equipo == "Ultrasonido" and "Ultrasonido" in solucion:
                 reglas = solucion["Ultrasonido"]
                 if "ciclo" in reglas and params["ciclo"] != reglas["ciclo"]:
-                    es_correcto = False; feedback_tecnico.append(f"❌ Ciclo incorrecto. Usaste {params['ciclo']}, sugerido: {reglas['ciclo']}")
+                    es_correcto = False; feedback_tecnico.append(f"❌ **Ciclo:** Usaste {params['ciclo']}, correcto es {reglas['ciclo']}.")
                 if "frecuencia" in reglas and params["frecuencia"] != reglas["frecuencia"]:
-                    es_correcto = False; feedback_tecnico.append(f"❌ Frecuencia incorrecta.")
+                    es_correcto = False; feedback_tecnico.append(f"❌ **Frecuencia:** Usaste {params['frecuencia']}, correcto es {reglas['frecuencia']}.")
                 if "intensidad_max" in reglas and params["intensidad"] > reglas["intensidad_max"]:
-                    feedback_tecnico.append(f"⚠️ Intensidad un poco alta.")
+                    feedback_tecnico.append(f"⚠️ **Intensidad:** {params['intensidad']} es un poco alta. Sugerido < {reglas['intensidad_max']}.")
 
+            # --- TENS ---
             if equipo == "TENS" and "TENS" in solucion:
                 reglas = solucion["TENS"]
-                if "freq_min" in reglas and params["freq"] < reglas["freq_min"]: feedback_tecnico.append("❌ Frecuencia muy baja.")
-                if "duracion_min" in reglas and params["duracion"] < reglas["duracion_min"]: feedback_tecnico.append("❌ Duración de pulso muy corta.")
+                if "freq_min" in reglas and params["freq"] < reglas["freq_min"]: feedback_tecnico.append("❌ **Frecuencia:** Muy baja para el objetivo.")
+                if "freq_max" in reglas and params["freq"] > reglas["freq_max"]: feedback_tecnico.append("❌ **Frecuencia:** Muy alta para el objetivo.")
+                if "duracion_min" in reglas and params["duracion"] < reglas["duracion_min"]: feedback_tecnico.append("❌ **Duración de pulso:** Insuficiente.")
 
+            # --- RUSA ---
             if equipo == "Rusa" and "Rusa" in solucion:
                 reglas = solucion["Rusa"]
-                if "ratio" in reglas and params["ratio"] not in reglas["ratio"]: feedback_tecnico.append("❌ Ratio inadecuado.")
+                if "ratio" in reglas and params["ratio"] not in reglas["ratio"]: feedback_tecnico.append(f"❌ **Ratio:** {params['ratio']} no es ideal aquí.")
+                if "burst_min" in reglas and params["burst"] < reglas["burst_min"]: feedback_tecnico.append("❌ **Burst:** Muy bajo.")
 
+            # --- ONDA CORTA ---
             if equipo == "Onda Corta" and "Onda Corta" in solucion:
                 reglas = solucion["Onda Corta"]
-                if "metodo" in reglas and params["metodo"] != reglas["metodo"]: feedback_tecnico.append(f"⚠️ Se prefiere método {reglas['metodo']}.")
-                if "dosis_min_potencia" in reglas and params["potencia"] < reglas["dosis_min_potencia"]: es_correcto = False; feedback_tecnico.append("❌ Dosis térmica insuficiente.")
-                
-            if equipo == "Infrarrojo" and "Infrarrojo" in solucion:
-                reglas = solucion["Infrarrojo"]
-                if "distancia_min" in reglas and params["distancia"] < reglas["distancia_min"]: feedback_tecnico.append("⚠️ ¡Cuidado! Muy cerca (riesgo quemadura).")
+                if "metodo" in reglas and params["metodo"] != reglas["metodo"]: feedback_tecnico.append(f"⚠️ **Método:** Se prefiere {reglas['metodo']}.")
+                p_media = params.get("media_resultante", 0)
+                if "dosis_min_potencia" in reglas and p_media < reglas["dosis_min_potencia"]:
+                    es_correcto = False; feedback_tecnico.append(f"❌ **Dosis:** {p_media}W es atérmico/insuficiente. Mínimo {reglas['dosis_min_potencia']}W.")
 
-        # Mostrar Feedback Técnico
+            # --- TIF ---
+            if equipo == "TIF" and "TIF" in solucion:
+                reglas = solucion["TIF"]
+                if "portadora_min" in reglas and params["portadora"] < reglas["portadora_min"]: feedback_tecnico.append("❌ **Portadora:** Muy baja (molestia sensitiva).")
+                if "vector" in reglas and params["vector"] != reglas["vector"]: feedback_tecnico.append(f"⚠️ **Vector:** Se sugiere {reglas['vector']}.")
+
+            # --- FARÁDICA ---
+            if "Farádica" in equipo and equipo in solucion:
+                reglas = solucion[equipo] # Busca por llave exacta ej "Farádica (Rectangular)"
+                if "polaridad" in reglas and params["polaridad"] != reglas["polaridad"]: feedback_tecnico.append("❌ **Polaridad:** Incorrecta.")
+                if "busqueda_tiempo" in reglas and params["fase"] > 100: feedback_tecnico.append("❌ **Estrategia:** Debes buscar tiempos más cortos (Cronaxia).")
+
+        # Mostrar Resultados
         str_feedback = " | ".join(feedback_tecnico)
+        
         if es_correcto:
-            st.success(f"Resultado Técnico: {str_feedback}")
+            st.markdown(f'<div class="success-box"><h3>🎉 Muy Bien</h3>{str_feedback}</div>', unsafe_allow_html=True)
         else:
-            st.error(f"Resultado Técnico: {str_feedback}")
+            st.markdown(f'<div class="error-box"><h3>⚠️ Atención</h3>{str_feedback}</div>', unsafe_allow_html=True)
             
         # Consultar IA
-        with st.spinner("🤖 Consultando al profesor..."):
-            res_ia = consultar_ia(datos_caso, f"Equipo: {nombre_completo}. Params: {params}. Justificación: {justificacion}", str_feedback)
-            st.markdown("### 🎓 Feedback Docente")
-            st.info(res_ia)
-
+        if "GEMINI_API_KEY" in st.secrets:
+            with st.spinner("🧠 Consultando al Profesor Virtual..."):
+                res_ia = consultar_ia_oficial(datos_caso, f"Equipo: {nombre_completo_equipo}. Config: {params}. Justificación: {justificacion}", str_feedback)
+                st.markdown("### 🎓 Feedback Docente")
+                st.write(res_ia)
+        else:
+            st.warning("⚠️ No se ha configurado la API Key de Gemini, por lo que no puedo darte el feedback cualitativo.")
+            
 else:
     st.write("👈 Selecciona un caso en el menú lateral para empezar.")
